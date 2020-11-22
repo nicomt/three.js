@@ -1,0 +1,141 @@
+namespace FBSCodec;
+
+struct Color {
+    r:float;
+    g:float;
+    b:float;
+}
+
+struct Vector2 {
+    x:float;
+    y:float;
+}
+
+struct Vector3 {
+    x:float;
+    y:float;
+}
+
+struct Matrix4 {
+    n11:float; n12:float; n13:float; n14:float;
+    n21:float; n22:float; n23:float; n24:float;
+    n31:float; n32:float; n33:float; n34:float;
+    n41:float; n42:float; n43:float; n44:float;
+}
+
+table Float32BufferAttribute {
+    array:[float];
+    itemSize:int = 0;
+    normalized:bool = false;
+}
+
+table Uint16BufferAttribute {
+    array:[uint16];
+    itemSize:int = 0;
+    normalized:bool = false;
+}
+
+union BufferAttribute { 
+    Float32BufferAttribute, 
+    Uint16BufferAttribute 
+}
+
+table Uint16BufferGeometryIndex {
+    array:[uint16];
+}
+
+table Uint32BufferGeometryIndex {
+    array:[uint];
+}
+
+union BufferGeometryIndex { Uint16BufferGeometryIndex, Uint32BufferGeometryIndex }
+
+table Attribute {
+    name:string (key);
+    attribute:BufferAttribute;
+}
+
+table BufferGeometry {
+    uuid:string;
+    name:string;
+    attributes:[Attribute];
+    index:BufferGeometryIndex;
+    userData:string;
+}
+
+table Unkown { json:string; }
+
+union Geometry { BufferGeometry, Unkown }
+
+union Material { Unkown }
+
+table Image {
+    data:[ubyte];
+    width:uint;
+    height:uint;
+    type:string;
+}
+
+table Texture {
+    uuid:string;
+    name:string;
+    image:Image;
+	offset:Vector2;
+	center:Vector2;
+    repeat:Vector2;
+	rotation:float;
+    wrapS:uint16 = 1001;
+    wrapT:uint16 = 1001;
+    mapping:uint16 = 300;
+    format:uint16 = 1023;
+    type:uint16 = 1009;
+    encoding:uint16 = 3000;
+    magFilter:uint16 = 1006;
+    minFilter:uint16 = 1008;
+    anisotropy:float = 1.0;
+    flipY:bool = false;
+    premultiplyAlpha:bool = false;
+    unpackAlignment:uint8 = 4;
+}
+
+struct Fog {
+    color:Color;
+    near:float;
+    far:float;
+}
+
+union Background {Color, Texture}
+
+table Scene {
+    bakground:Background;
+    environment:Texture;
+    fog: Fog;
+}
+
+table InstancedMesh {
+    count:int;
+    instanceMatrix:Float32BufferAttribute;
+}
+
+union ObjectExt {Scene, InstancedMesh}
+
+table Object {
+    uuid:string;
+    type:string;
+    name:string;
+    castShadow:bool = false;
+    receiveShadow:bool = false;
+    visible:bool = true;
+    frustumCulled:bool = true;
+    renderOrder:int = 0;
+    layers: uint = 0;
+    matrix:Matrix4;
+    matrixAutoUpdate:bool = true;
+    geometry:Geometry;
+    material:Material;
+    children:[Object];
+    userData:string;
+    ext:ObjectExt;
+}
+
+root_type Object;

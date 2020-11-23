@@ -10,7 +10,7 @@
 		<div id="info">
 			<a href="https://threejs.org" target="_blank" rel="noopener">three.js</a> webgl - exporter - flatbuffers<br/><br/>
 			<button id="export_scene">Export Scene1</button>
-			<button id="export_scenes">Export Scene1 and THREE.Scene 2</button>
+			<button id="toggle_scene">Toggle Scene</button>
 			<button id="export_object">Export Sphere</button><br/>
 			<button id="export_obj">Export WaltHead</button>
 			<button id="export_objects">Export Sphere and Grid</button>
@@ -29,27 +29,10 @@
 			import * as THREE from '../build/three.module.js';
 
 			import { OBJLoader } from './jsm/loaders/OBJLoader.js';
+			import { FBSLoader } from './jsm/loaders/FBSLoader.js';
 			import { FBSExporter } from './jsm/exporters/FBSExporter.js';
 
-			function exportFBS( input ) {
 
-				const fbsExporter = new FBSExporter();
-
-				const options = {
-					trs: document.getElementById( 'option_trs' ).checked,
-					onlyVisible: document.getElementById( 'option_visible' ).checked,
-					truncateDrawRange: document.getElementById( 'option_drawrange' ).checked,
-					binary: document.getElementById( 'option_binary' ).checked,
-					forcePowerOfTwoTextures: document.getElementById( 'option_forcepot' ).checked,
-					maxTextureSize: Number( document.getElementById( 'option_maxsize' ).value ) || Infinity // To prevent NaN value
-				};
-				fbsExporter.parse( input, function ( result ) {
-
-					saveArrayBuffer( result, 'scene.bfbs' );
-			
-				}, options );
-
-			}
 
 			document.getElementById( 'export_scene' ).addEventListener( 'click', function () {
 
@@ -57,11 +40,7 @@
 
 			} );
 
-			document.getElementById( 'export_scenes' ).addEventListener( 'click', function () {
 
-				exportFBS( [ scene1, scene2 ] );
-
-			} );
 
 			document.getElementById( 'export_object' ).addEventListener( 'click', function () {
 
@@ -110,11 +89,49 @@
 
 			let container;
 
-			let camera, object, object2, material, geometry, scene1, scene2, renderer;
+			let camera, object, object2, material, geometry, scene, scene1, scene2, renderer;
 			let gridHelper, sphere, waltHead;
 
 			init();
 			animate();
+
+			function exportFBS( input ) {
+
+				const fbsExporter = new FBSExporter();
+				fbsExporter.parse( input, function ( result ) {
+
+					const loader = new FBSLoader( );
+					scene2 = loader.parse( result );
+					scene2.add( camera );
+					// ---------------------------------------------------------------------
+					// Ambient light
+					// ---------------------------------------------------------------------
+					const ambientLight = new THREE.AmbientLight( 0xffffff, 0.2 );
+					ambientLight.name = 'AmbientLight';
+					scene2.add( ambientLight );
+
+					// ---------------------------------------------------------------------
+					// DirectLight
+					// ---------------------------------------------------------------------
+					const dirLight = new THREE.DirectionalLight( 0xffffff, 1 );
+					dirLight.target.position.set( 0, 0, - 1 );
+					dirLight.add( dirLight.target );
+					dirLight.lookAt( - 1, - 1, 0 );
+					dirLight.name = 'DirectionalLight';
+					scene2.add( dirLight );
+
+					scene = scene2;
+					window.scene2 = scene2;
+
+				} );
+
+			}
+
+			document.getElementById( 'toggle_scene' ).addEventListener( 'click', function () {
+
+				window.scene = scene = scene === scene1 ? scene2 : scene1;
+
+			} );
 
 			function init() {
 
@@ -440,16 +457,6 @@
 				} );
 
 
-				// ---------------------------------------------------------------------
-				// 2nd THREE.Scene
-				// ---------------------------------------------------------------------
-				scene2 = new THREE.Scene();
-				object = new THREE.Mesh( new THREE.BoxBufferGeometry( 100, 100, 100 ), material );
-				object.position.set( 0, 0, 0 );
-				object.name = "Cube2ndScene";
-				scene2.name = 'Scene2';
-				scene2.add( object );
-
 				//
 
 				renderer = new THREE.WebGLRenderer( { antialias: true } );
@@ -461,6 +468,9 @@
 				//
 
 				window.addEventListener( 'resize', onWindowResize, false );
+
+				scene = scene1;
+				window.scene1 = scene1;
 
 			}
 
@@ -484,14 +494,15 @@
 			}
 
 			function render() {
-
+			
+				if ( ! scene ) return;
 				const timer = Date.now() * 0.0001;
 
 				camera.position.x = Math.cos( timer ) * 800;
 				camera.position.z = Math.sin( timer ) * 800;
 
-				camera.lookAt( scene1.position );
-				renderer.render( scene1, camera );
+				camera.lookAt( scene.position );
+				renderer.render( scene, camera );
 
 			}
 

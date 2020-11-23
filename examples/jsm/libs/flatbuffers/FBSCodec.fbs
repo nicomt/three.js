@@ -17,55 +17,88 @@ struct Vector3 {
 }
 
 struct Matrix4 {
-    n11:float; n12:float; n13:float; n14:float;
-    n21:float; n22:float; n23:float; n24:float;
-    n31:float; n32:float; n33:float; n34:float;
-    n41:float; n42:float; n43:float; n44:float;
+    n11:float; n21:float; n31:float; n41:float;
+    n12:float; n22:float; n32:float; n42:float;
+    n13:float; n23:float; n33:float; n43:float;
+    n14:float; n24:float; n34:float; n44:float;
 }
 
-table Float32BufferAttribute {
-    array:[float];
-    itemSize:int = 0;
+
+table Int8Array {
+    data:[int8];
+}
+
+table Uint8Array {
+    data:[uint8];
+    clamped:bool = false;
+}
+
+table Int16Array {
+    data:[int16];
+}
+
+table Uint16Array {
+    data:[uint16];
+}
+
+table Int32Array {
+    data:[int32];
+}
+
+table Uint32Array {
+    data:[uint32];
+}
+
+table Float32Array {
+    data:[float32];
+}
+
+table Float64Array {
+    data:[float64];
+}
+
+
+union TypedArray {
+    Int8Array,
+	Uint8Array,
+	Int16Array,
+	Uint16Array,
+	Int32Array,
+	Uint32Array,
+	Float32Array,
+	Float64Array
+}
+
+
+table BufferAttribute {
+    array:TypedArray;
+    itemSize:int = 3;
     normalized:bool = false;
 }
-
-table Uint16BufferAttribute {
-    array:[uint16];
-    itemSize:int = 0;
-    normalized:bool = false;
-}
-
-union BufferAttribute { 
-    Float32BufferAttribute, 
-    Uint16BufferAttribute 
-}
-
-table Uint16BufferGeometryIndex {
-    array:[uint16];
-}
-
-table Uint32BufferGeometryIndex {
-    array:[uint];
-}
-
-union BufferGeometryIndex { Uint16BufferGeometryIndex, Uint32BufferGeometryIndex }
 
 table Attribute {
     name:string (key);
     attribute:BufferAttribute;
 }
 
+struct BufferGeometryGroup {
+    start:uint;
+    count:uint;
+    materialIndex:uint;
+}
+
 table BufferGeometry {
     uuid:string;
     name:string;
     attributes:[Attribute];
-    index:BufferGeometryIndex;
+    index:BufferAttribute;
+    groups:[BufferGeometryGroup];
     userData:string;
 }
 
-table Unkown { json:string; }
+table Unkown { uuid:string; json:string; }
 
-union Geometry { BufferGeometry, Unkown }
+// union Geometry { BufferGeometry, Unkown }
 
 union Material { Unkown }
 
@@ -84,19 +117,20 @@ table Texture {
 	center:Vector2;
     repeat:Vector2;
 	rotation:float;
-    wrapS:uint16 = 1001;
-    wrapT:uint16 = 1001;
-    mapping:uint16 = 300;
-    format:uint16 = 1023;
-    type:uint16 = 1009;
-    encoding:uint16 = 3000;
-    magFilter:uint16 = 1006;
-    minFilter:uint16 = 1008;
-    anisotropy:float = 1.0;
+    wrapS:uint16;
+    wrapT:uint16;
+    mapping:uint16;
+    format:uint16;
+    type:uint16;
+    encoding:uint16;
+    magFilter:uint16;
+    minFilter:uint16;
+    anisotropy:float;
     flipY:bool = false;
-    premultiplyAlpha:bool = false;
-    unpackAlignment:uint8 = 4;
+    premultiplyAlpha:bool;
+    unpackAlignment:uint8;
 }
+
 
 struct Fog {
     color:Color;
@@ -104,24 +138,27 @@ struct Fog {
     far:float;
 }
 
+struct FogExp2 {
+    color:Color;
+    density:float;
+}
+
+union FogUni { Fog, FogExp2 }
+
 union Background {Color, Texture}
 
-table Scene {
-    bakground:Background;
-    environment:Texture;
-    fog: Fog;
+union Object {
+    Object3D,
+    Mesh,
+    Line,
+    Points,
+    Group,
+    Scene,
+    InstancedMesh
 }
 
-table InstancedMesh {
-    count:int;
-    instanceMatrix:Float32BufferAttribute;
-}
-
-union ObjectExt {Scene, InstancedMesh}
-
-table Object {
+table Object3D {
     uuid:string;
-    type:string;
     name:string;
     castShadow:bool = false;
     receiveShadow:bool = false;
@@ -131,11 +168,55 @@ table Object {
     layers: uint = 0;
     matrix:Matrix4;
     matrixAutoUpdate:bool = true;
-    geometry:Geometry;
-    material:Material;
     children:[Object];
     userData:string;
-    ext:ObjectExt;
 }
 
-root_type Object;
+table Mesh {
+    __base__:Object3D;
+    geometry:BufferGeometry;
+    material:Material;
+}
+
+table Line {
+    __base__:Object3D;
+    geometry:BufferGeometry;
+    material:Material;
+}
+
+table Points {
+    __base__:Object3D;
+    geometry:BufferGeometry;
+    material:Material;
+}
+
+
+table Group {
+    __base__:Object3D;
+}
+
+table Scene {
+    __base__:Object3D;
+    background:Background;
+    environment:Texture;
+    fog:FogUni;
+}
+
+table InstancedMesh {
+    __base__:Object3D;
+    count:int;
+    instanceMatrix:BufferAttribute;
+}
+
+table Metadata {
+    version:float = 1.0;
+    generator:string;
+}
+
+table Root {
+    metadata:Metadata;
+    object:Object;
+}
+
+
+root_type Root;

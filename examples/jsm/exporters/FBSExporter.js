@@ -1,5 +1,5 @@
 import { flatbuffers } from "../libs/flatbuffers/flatbuffers.module.js";
-import { FBSCodec as codec } from "../libs/flatbuffers/FBSCodec_generated.js";
+import { FBSCodec as fbs } from "../libs/flatbuffers/FBSCodec_generated.js";
 
 class FBSExporter {
 
@@ -11,33 +11,28 @@ class FBSExporter {
 			geometries: new Map()
 		};
 
-		function processIndex( index ) {
+		function processBufferAttribute( attribute ) {
 
-			if ( index ) {
+			if ( ! attribute ) return;
 
-				if ( index.array.constructor.name === 'Uint16Array' ) {
+			const arrayCodec = fbs[ attribute.array.constructor.name ];
+			if ( arrayCodec ) {
 
-					const array = codec.Uint16BufferGeometryIndex.createArrayVector( builder, index.array );
-					codec.Uint16BufferGeometryIndex.startUint16BufferGeometryIndex( builder );
-					codec.Uint16BufferGeometryIndex.addArray( builder, array );
-					const idxOffset = codec.Uint16BufferGeometryIndex.endUint16BufferGeometryIndex( builder );
-					return {
-						type: codec.BufferGeometryIndex.Uint16BufferGeometryIndex,
-						index: idxOffset
-					};
+				const dataOffset = arrayCodec.createDataVector( builder, attribute.array );
+				arrayCodec.start( builder );
+				arrayCodec.addData( builder, dataOffset );
+				const arrayOffset = arrayCodec.end( builder );
 
-				} else {
+				fbs.BufferAttribute.start( builder );
+				fbs.BufferAttribute.addItemSize( builder, attribute.itemSize );
+				fbs.BufferAttribute.addNormalized( builder, attribute.normalized );
+				fbs.BufferAttribute.addArrayType( builder, fbs.TypedArray[ attribute.array.constructor.name ] );
+				fbs.BufferAttribute.addArray( builder, arrayOffset );
+				return fbs.BufferAttribute.end( builder );
 
-					const array = codec.Uint32BufferGeometryIndex.createArrayVector( builder, index.array );
-					codec.Uint32BufferGeometryIndex.startUint32BufferGeometryIndex( builder );
-					codec.Uint32BufferGeometryIndex.addArray( builder, array );
-					const idxOffset = codec.Uint32BufferGeometryIndex.endUint32BufferGeometryIndex( builder );
-					return {
-						type: codec.BufferGeometryIndex.Uint32BufferGeometryIndex,
-						index: idxOffset
-					};
+			} else {
 
-				}
+				console.warn( `THREE.FBSExporter: Attribute of type ${attribute.array.constructor.name} not supported.` );
 
 			}
 
@@ -48,77 +43,58 @@ class FBSExporter {
 			const attributesOffsets = [];
 			for ( const [ name, attribute ] of Object.entries( attributes ) ) {
 
-				let attributeType, attributeIdx;
-				const nameIdx = builder.createString( name );
-				switch ( attribute.array.constructor.name ) {
+				const bufAttributeOffset = processBufferAttribute( attribute );
+				if ( bufAttributeOffset ) {
 
-					default:
-						const array = codec.Float32BufferAttribute.createArrayVector( builder, attribute.array );
-						codec.Float32BufferAttribute.startFloat32BufferAttribute( builder );
-						codec.Float32BufferAttribute.addItemSize( builder, attribute.itemSize );
-						codec.Float32BufferAttribute.addNormalized( builder, attribute.normalized );
-						codec.Float32BufferAttribute.addArray( builder, array );
-						attributeType = codec.BufferAttribute.Float32BufferAttribute;
-						attributeIdx = codec.Float32BufferAttribute.endFloat32BufferAttribute( builder );
-						break;
+					const nameOffset = builder.createString( name );
+					fbs.Attribute.start( builder );
+					fbs.Attribute.addName( builder, nameOffset );
+					fbs.Attribute.addAttribute( builder, bufAttributeOffset );
+					attributesOffsets.push( fbs.Attribute.end( builder ) );
 
 				}
 
-				codec.Attribute.startAttribute( builder );
-				codec.Attribute.addName( builder, nameIdx );
-				codec.Attribute.addAttributeType( builder, attributeType );
-				codec.Attribute.addAttribute( builder, attributeIdx );
-
-				attributesOffsets.push( codec.Attribute.endAttribute( builder ) );
-
 			}
 
-			return codec.BufferGeometry.createAttributesVector( builder, attributesOffsets );
+			return fbs.BufferGeometry.createAttributesVector( builder, attributesOffsets );
 
 		}
 
 		function processBufferGeometry( geometry ) {
 
-			const uuid = builder.createString( geometry.uuid );
-			const name = builder.createString( geometry.name );
-			const index = processIndex( geometry.index );
-			const attributes = processAttributes( geometry.attributes );
+			const uuidOffset = builder.createString( geometry.uuid );
+			const nameOffset = builder.createString( geometry.name );
+			const indexOffset = processBufferAttribute( geometry.index );
+			const attributesOffset = processAttributes( geometry.attributes );
 
-			codec.BufferGeometry.startBufferGeometry( builder );
-			codec.BufferGeometry.addUuid( builder, uuid );
-			codec.BufferGeometry.addName( builder, name );
-			codec.BufferGeometry.addAttributes( builder, attributes );
-			if ( index ) {
+			fbs.BufferGeometry.start( builder );
+			fbs.BufferGeometry.addUuid( builder, uuidOffset );
+			fbs.BufferGeometry.addName( builder, nameOffset );
+			fbs.BufferGeometry.addAttributes( builder, attributesOffset );
+			if ( indexOffset ) fbs.BufferGeometry.addIndex( builder, indexOffset );
 
-				codec.BufferGeometry.addIndexType( builder, index.type );
-				codec.BufferGeometry.addIndex( builder, index.index );
-
-			}
-
-			return codec.BufferGeometry.endBufferGeometry( builder );
+			return fbs.BufferGeometry.end( builder );
 
 		}
 
 		function processGeometry( geometry ) {
 
-			if ( geometry ) {
+			if ( ! geometry ) return;
 
-				if ( cache.geometries.has( geometry.uuid ) ) {
-
-					return cache.geometries.get( geometry.uuid );
-
-				}
-
-				if ( geometry.isBufferGeometry ) {
-
-					cache.geometries.set( geometry.uuid, {
-						type: codec.Geometry.BufferGeometry,
-						geometry: processBufferGeometry( geometry )
-					} );
-
-				}
+			if ( cache.geometries.has( geometry.uuid ) ) {
 
 				return cache.geometries.get( geometry.uuid );
+
+			}
+
+			if ( geometry.isBufferGeometry ) {
+
+				const geometryOffset = processBufferGeometry( geometry );
+				cache.geometries.set(
+					geometry.uuid,
+					geometryOffset
+				);
+				return geometryOffset;
 
 			}
 
@@ -144,6 +120,39 @@ class FBSExporter {
 
 		// }
 
+		function processObjectBase( object ) {
+
+			const uuidOffset = builder.createString( object.uuid );
+			const nameOffset = builder.createString( object.name );
+			const children = object.children
+				.map( c => processObject( c ) )
+				.filter( c => !! c );
+			const childrenOffsets = fbs.Object3D.createChildrenVector(
+				builder,
+				children.map( c => c[ 1 ] )
+			);
+			const childrenTypesOffsets = fbs.Object3D.createChildrenTypeVector(
+				builder,
+				children.map( c => c[ 0 ] )
+			);
+
+
+			fbs.Object3D.start( builder );
+			fbs.Object3D.addUuid( builder, uuidOffset );
+			fbs.Object3D.addName( builder, nameOffset );
+			fbs.Object3D.addCastShadow( builder, object.castShadow );
+			fbs.Object3D.addReceiveShadow( builder, object.receiveShadow );
+			fbs.Object3D.addFrustumCulled( builder, object.frustumCulled );
+			fbs.Object3D.addRenderOrder( builder, object.renderOrder );
+			fbs.Object3D.addMatrix( builder, fbs.Matrix4.create( builder, ...object.matrix.toArray() ) );
+			fbs.Object3D.addLayers( builder, object.layers.mask );
+			fbs.Object3D.addVisible( builder, object.visible );
+			fbs.Object3D.addChildrenType( builder, childrenTypesOffsets );
+			fbs.Object3D.addChildren( builder, childrenOffsets );
+			return fbs.Object3D.end( builder );
+
+		}
+
 		function processObject( object ) {
 
 			if ( cache.objects.has( object.uuid ) ) {
@@ -152,40 +161,129 @@ class FBSExporter {
 
 			}
 
-			const uuid = builder.createString( object.uuid );
-			const name = builder.createString( object.name );
-			const type = builder.createString( object.type );
-			const geometry = processGeometry( object.geometry );
-			// const material = parseMaterial( object.material );
-			const children = codec.Object.createChildrenVector( builder, object.children.map( c => processObject( c ) ) );
+			if ( ! fbs.Object[ object.type ] ) return;
 
 
-			codec.Object.startObject( builder );
-			codec.Object.addUuid( builder, uuid );
-			codec.Object.addName( builder, name );
-			codec.Object.addType( builder, type );
-			codec.Object.addCastShadow( builder, object.castShadow );
-			codec.Object.addReceiveShadow( builder, object.receiveShadow );
-			codec.Object.addFrustumCulled( builder, object.frustumCulled );
-			codec.Object.addRenderOrder( builder, object.renderOrder );
-			codec.Object.addMatrix( builder, codec.Matrix4.createMatrix4( builder, ...object.matrix.elements ) );
-			codec.Object.addLayers( builder, object.layers );
 
-			if ( geometry ) {
+			const objectBaseOffset = processObjectBase( object );
 
-				codec.Object.addGeometryType( builder, geometry.type );
-				codec.Object.addGeometry( builder, geometry.geometry );
+			let res;
+
+			switch ( object.type ) {
+
+				case 'Scene': {
+
+					fbs.Scene.start( builder );
+					fbs.Scene.add_Base_( builder, objectBaseOffset );
+					if ( object.background && object.background.isColor ) {
+
+						fbs.Scene.addBackgroundType( builder, fbs.Background.Color );
+						fbs.Scene.addBackground( builder, fbs.Color.create(
+							builder,
+							object.background.r,
+							object.background.g,
+							object.background.b
+						) );
+
+					}
+
+					if ( object.fog && object.fog.isFog ) {
+
+						fbs.Scene.addFogType( builder, fbs.FogUni.Fog );
+						fbs.Scene.addFog( builder, fbs.Fog.create(
+							builder,
+							object.fog.color.r,
+							object.fog.color.g,
+							object.fog.color.b,
+							object.fog.near,
+							object.fog.far
+						) );
+
+					}
+
+					if ( object.fog && object.fog.isFogExp2 ) {
+
+						fbs.Scene.addFogType( builder, fbs.FogUni.FogExp2 );
+						fbs.Scene.addFog( builder, fbs.FogExp2.create(
+							builder,
+							object.fog.color.r,
+							object.fog.color.g,
+							object.fog.color.b,
+							object.fog.density
+						) );
+
+					}
+
+
+					const sceneOffset = fbs.Scene.end( builder );
+					res = [ fbs.Object.Scene, sceneOffset ];
+					break;
+
+				}
+
+				case 'Mesh':
+				case 'Line':
+				case 'Points': {
+
+					const geometryOffset = processGeometry( object.geometry );
+					// const material = parseMaterial( object.material );
+					const objCodec = fbs[ object.type ];
+					objCodec.start( builder );
+					objCodec.add_Base_( builder, objectBaseOffset );
+					objCodec.addGeometry( builder, geometryOffset );
+					const objOffset = objCodec.end( builder );
+					res = [ fbs.Object[ object.type ], objOffset ];
+					break;
+
+
+				}
+
+				case 'Object3D': {
+
+					res = [ fbs.Object.Object3D, objectBaseOffset ];
+					break;
+
+				}
+
+				default: {
+
+					const objCodec = fbs[ object.type ];
+
+					if ( ! objCodec ) {
+
+						console.warn( `FBSExporter: Object type not supported ${object.type}` );
+						return;
+
+					}
+
+					objCodec.start( builder );
+					objCodec.add_Base_( builder, objectBaseOffset );
+					const objectOffset = objCodec.end( builder );
+					res = [ fbs.Object[ object.type ], objectOffset ];
+					break;
+
+				}
 
 			}
 
-			codec.Object.addChildren( builder, children );
-			cache.objects.set( object.uuid, codec.Object.endObject( builder ) );
-			return cache.objects.get( object.uuid );
+			cache.objects.set( object.uuid, res );
+			return res;
 
 		}
 
-		const root = processObject( input );
-		builder.finish( root );
+		const [ objType, objOffset ] = processObject( input );
+		const generatorOffset = builder.createString( 'FBSExporter' );
+		fbs.Metadata.start( builder );
+		fbs.Metadata.addVersion( builder, 1.0 );
+		fbs.Metadata.addGenerator( builder, generatorOffset );
+		const metadataOffset = fbs.Metadata.end( builder );
+
+		fbs.Root.start( builder );
+		fbs.Root.addMetadata( builder, metadataOffset );
+		fbs.Root.addObjectType( builder, objType );
+		fbs.Root.addObject( builder, objOffset );
+		const rootOffset = fbs.Root.end( builder );
+		builder.finish( rootOffset );
 		onDone( builder.asUint8Array() );
 
 	}

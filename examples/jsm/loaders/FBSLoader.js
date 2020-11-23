@@ -8,10 +8,14 @@ import {
 	Object3D,
 	FileLoader,
 	Scene,
-	Color
+	Color,
+	Fog,
+	FogExp2,
+	Line,
+	Points
 } from "../../../build/three.module.js";
 import { flatbuffers } from "../libs/flatbuffers/flatbuffers.module.js";
-import { FBSCodec as codec } from "../libs/flatbuffers/FBSCodec_generated.js";
+import { FBSCodec as fbs } from "../libs/flatbuffers/FBSCodec_generated.js";
 
 
 
@@ -55,64 +59,61 @@ class FBSLoader extends Loader {
 
 	parse( bytes ) {
 
-		var buf = new flatbuffers.ByteBuffer( new Uint8Array( bytes ) );
-		const rootObj = codec.Object.getRootAsObject( buf );
+		this.cache = {
+			objects: new Map(),
+			geometries: new Map()
+		};
 
-		return this.parseObject( rootObj );
+		var buf = new flatbuffers.ByteBuffer( new Uint8Array( bytes ) );
+		const root = fbs.Root.getRoot( buf );
+		const object = this.parseObject(
+			root.objectType(),
+			root.object( new fbs[ fbs.ObjectName[ root.objectType() ] ]() )
+		);
+		this.cache = null;
+		return object;
+
 
 	}
 
-	parseGeometry( objData ) {
+	parseBufferAttribute( data ) {
 
-		const data = objData.geometry( new codec.BufferGeometry() );
+	}
+
+	parseBufferAttribute( data ) {
+
+		// TODO handle clamped array
+		const arrayData = data.array( new fbs[ fbs.TypedArrayName[ data.arrayType() ] ]() );
+		const array = arrayData.dataArray();
+		return new BufferAttribute(
+			array,
+			data.itemSize(),
+			data.normalized()
+		);
+
+	}
+
+	parseBufferGeometry( data ) {
+
 		const geometry = new BufferGeometry();
 		geometry.uuid = data.uuid();
-		geometry.name = data.name();
+		geometry.name = data.name() || '';
 
 		for ( let i = 0; i < data.attributesLength(); i ++ ) {
 
 			const att = data.attributes( i );
 			const name = att.name();
-			const attribute = att.attribute( new codec.Float32BufferAttribute() );
-			const array = new Float32Array( attribute.arrayLength() );
-			for ( let j = 0; j < attribute.arrayLength(); j ++ ) {
+			const attributeData = att.attribute();
 
-				array[ j ] = attribute.array( j );
-
-			}
-
-			const bufferAttribute = new BufferAttribute(
-				array,
-				attribute.itemSize(),
-				attribute.normalized()
-			);
-			geometry.setAttribute( name, bufferAttribute );
+			geometry.setAttribute( name, this.parseBufferAttribute( attributeData ) );
 
 		}
 
-		if ( data.indexType() !== codec.BufferGeometryIndex.NONE ) {
+		const indexData = data.index();
 
-			let index, array;
+		if ( indexData ) {
 
-			if ( data.indexType() === codec.BufferGeometryIndex.Uint16BufferGeometryIndex ) {
-
-				index = data.index( new codec.Uint16BufferGeometryIndex() );
-				array = new Uint16Array( index.arrayLength() );
-
-			} else {
-
-				index = data.index( new codec.Uint32BufferGeometryIndex() );
-				array = new Uint32Array( index.arrayLength() );
-
-			}
-
-			for ( let i = 0; i < index.arrayLength(); i ++ ) {
-
-				array[ i ] = index.array( i );
-
-			}
-
-			geometry.setIndex( new BufferAttribute( array, 1 ) );
+			geometry.setIndex( this.parseBufferAttribute( indexData ) );
 
 		}
 
@@ -120,41 +121,57 @@ class FBSLoader extends Loader {
 
 	}
 
-	parseObject( data ) {
+	parseGeometry( data ) {
+
+		if ( this.cache.geometries.has( data.uuid() ) ) {
+
+			return this.cache.geometries.get( data.uuid() );
+
+		}
+
+		const geometry = this.parseBufferGeometry( data );
+		this.cache.geometries.set( data.uuid(), geometry );
+		return geometry;
+
+	}
+
+	parseObject( type, data ) {
 
 		let object;
 
-		switch ( data.type() ) {
+		switch ( type ) {
 
-			case 'Scene':
+			case fbs.Object.Scene: {
 
 				object = new Scene();
 
-				if ( data.background !== undefined ) {
+				if ( data.backgroundType() === fbs.Background.Color ) {
 
-					if ( Number.isInteger( data.background ) ) {
-
-						object.background = new Color( data.background );
-
-					}
+					const bg = data.background();
+					object.background = new Color( bg.r, bg.g, bg.b );
 
 				}
 
-				if ( data.fog !== undefined ) {
+				if ( data.fogType() === fbs.FogUni.Fog ) {
 
-					if ( data.fog.type === 'Fog' ) {
+					const fog = data.fog( new fbs.Fog() );
+					const c = fog.color();
 
-						object.fog = new Fog( data.fog.color, data.fog.near, data.fog.far );
+					object.fog = new Fog( new Color( c.r, c.g, c.b ), fog.near(), fog.far() );
 
-					} else if ( data.fog.type === 'FogExp2' ) {
+				} else if ( data.fog.type === 'FogExp2' ) {
 
-						object.fog = new FogExp2( data.fog.color, data.fog.density );
-
-					}
+					const fog = data.fog( new fbs.FogExp2() );
+					const c = fog.color();
+					object.fog = new FogExp2( new Color( c.r, c.g, c.b ), fog.density() );
 
 				}
 
 				break;
+
+			}
+
+
 
 			// case 'PerspectiveCamera':
 
@@ -223,90 +240,132 @@ class FBSLoader extends Loader {
 
 			// 	console.warn( 'THREE.ObjectLoader.parseObject() does not support SkinnedMesh yet.' );
 
-			case 'Mesh':
+			case fbs.Object.Mesh: {
 
-				const geometry = this.parseGeometry( data );
-				const material = new MeshStandardMaterial();
+				const geometryData = data.geometry();
+				const geometry = this.parseGeometry( geometryData );
+				const material = new MeshStandardMaterial( {
+					color: 0xff9e1b
+				} );
 				// material = this.parseMaterial( data.material );
 
 				object = new Mesh( geometry, material );
 
 				break;
 
-				// case 'InstancedMesh':
+			}
 
-				// 	geometry = getGeometry( data.geometry );
-				// 	material = getMaterial( data.material );
-				// 	const count = data.count;
-				// 	const instanceMatrix = data.instanceMatrix;
+			case fbs.Object.Line: {
 
-				// 	object = new InstancedMesh( geometry, material, count );
-				// 	object.instanceMatrix = new BufferAttribute( new Float32Array( instanceMatrix.array ), 16 );
+				const geometryData = data.geometry();
+				const geometry = this.parseGeometry( geometryData );
+				object = new Line( geometry );
+				break;
 
-				// 	break;
+			}
 
-				// case 'LOD':
+			case fbs.Object.Points: {
 
-				// 	object = new LOD();
+				const geometryData = data.geometry();
+				const geometry = this.parseGeometry( geometryData );
+				object = new Points( geometry );
+				break;
 
-				// 	break;
+			}
 
-				// case 'Line':
 
-				// 	object = new Line( getGeometry( data.geometry ), getMaterial( data.material ), data.mode );
 
-				// 	break;
 
-				// case 'LineLoop':
+			// case 'InstancedMesh':
 
-				// 	object = new LineLoop( getGeometry( data.geometry ), getMaterial( data.material ) );
+			// 	geometry = getGeometry( data.geometry );
+			// 	material = getMaterial( data.material );
+			// 	const count = data.count;
+			// 	const instanceMatrix = data.instanceMatrix;
 
-				// 	break;
+			// 	object = new InstancedMesh( geometry, material, count );
+			// 	object.instanceMatrix = new BufferAttribute( new Float32Array( instanceMatrix.array ), 16 );
 
-				// case 'LineSegments':
+			// 	break;
 
-				// 	object = new LineSegments( getGeometry( data.geometry ), getMaterial( data.material ) );
+			// case 'LOD':
 
-				// 	break;
+			// 	object = new LOD();
 
-				// case 'PointCloud':
-				// case 'Points':
+			// 	break;
 
-				// 	object = new Points( getGeometry( data.geometry ), getMaterial( data.material ) );
 
-				// 	break;
 
-				// case 'Sprite':
+			// case 'LineLoop':
 
-				// 	object = new Sprite( getMaterial( data.material ) );
+			// 	object = new LineLoop( getGeometry( data.geometry ), getMaterial( data.material ) );
 
-				// 	break;
+			// 	break;
 
-			case 'Group':
+			// case 'LineSegments':
+
+			// 	object = new LineSegments( getGeometry( data.geometry ), getMaterial( data.material ) );
+
+			// 	break;
+
+			// case 'PointCloud':
+			// case 'Points':
+
+			// 	object = new Points( getGeometry( data.geometry ), getMaterial( data.material ) );
+
+			// 	break;
+
+			// case 'Sprite':
+
+			// 	object = new Sprite( getMaterial( data.material ) );
+
+			// 	break;
+
+			case fbs.Object.Group: {
 
 				object = new Group();
 
 				break;
 
-			default:
+			}
+
+
+
+			case fbs.Object.Object3D: {
 
 				object = new Object3D();
+				break;
+
+			}
+
+
+			default: {
+
+				console.warn( `FBSLoader: unsupported object type code (${type}) falling back to Object3D` );
+				object = new Object3D();
+				break;
+
+			}
+
+
 
 		}
 
-		object.uuid = data.uuid();
-		object.name = data.name();
+		const base = type === fbs.Object.Object3D ? data : data._base_();
 
-		object.visible = data.visible();
-		object.frustumCulled = data.frustumCulled();
-		object.renderOrder = data.renderOrder();
-		object.userData = data.userData();
-		object.layers.mask = data.layers();
+		object.uuid = base.uuid();
+		if ( base.name() ) object.name = base.name();
 
-		object.castShadow = data.castShadow();
-		object.receiveShadow = data.receiveShadow();
+		object.visible = base.visible();
+		object.frustumCulled = base.frustumCulled();
+		object.renderOrder = base.renderOrder();
+		if ( base.userData() ) object.userData = base.userData();
+		object.layers.mask = base.layers();
 
-		const m = data.matrix();
+		object.castShadow = base.castShadow();
+		object.receiveShadow = base.receiveShadow();
+
+		const m = base.matrix();
 		if ( m ) {
 
 			object.matrix.set(
@@ -315,13 +374,13 @@ class FBSLoader extends Loader {
 				m.n31(), m.n32(), m.n33(), m.n34(),
 				m.n41(), m.n42(), m.n43(), m.n44()
 			);
-			object.matrixAutoUpdate = data.matrixAutoUpdate();
+			object.matrixAutoUpdate = base.matrixAutoUpdate();
 			if ( object.matrixAutoUpdate ) object.matrix.decompose( object.position, object.quaternion, object.scale );
 
 		}
 
 
-		if ( data.shadow ) {
+		if ( base.shadow ) {
 
 			if ( data.shadow.bias !== undefined ) object.shadow.bias = data.shadow.bias;
 			if ( data.shadow.normalBias !== undefined ) object.shadow.normalBias = data.shadow.normalBias;
@@ -332,14 +391,13 @@ class FBSLoader extends Loader {
 		}
 
 
+		for ( let i = 0; i < base.childrenLength(); i ++ ) {
 
-		if ( data.childrenLength() > 0 ) {
-
-			for ( let i = 0; i < data.childrenLength(); i ++ ) {
-
-				object.add( this.parseObject( data.children( i ) ) );
-
-			}
+			const type = base.childrenType( i );
+			object.add( this.parseObject( type, base.children(
+				i,
+				new fbs[ fbs.ObjectName[ type ] ]()
+			) ) );
 
 		}
 
